@@ -15,6 +15,82 @@ function Utils.inlineIf(condition, T, F)
 	if condition then return T else return F end
 end
 
+-- Determine if the tracked Pokémon's moves are old and if so mark with a star
+function Utils.calculateMoveStars(pokemonID, level)
+	local stars = { "", "", "", "" }
+
+	if pokemonID == nil or pokemonID == 0 or level == nil or level == 1 then
+		return stars
+	end
+
+	-- If nothing has been tracked thus far for this Pokemon, return no stars
+	local pokemon = Tracker.Data.allPokemon[pokemonID]
+	if pokemon == nil or pokemon.moves == nil then
+		return stars
+	end
+
+	-- For each move, count how many moves this Pokemon at this 'level' has learned already
+	local movesLearnedSince = { 0, 0, 0, 0 }
+	local allMoveLevels = PokemonData[pokemonID + 1].movelvls[GameSettings.versiongroup]
+	for _, lv in pairs(allMoveLevels) do
+		for moveIndex, move in pairs(pokemon.moves) do
+			if lv > move.level and lv <= level then
+				movesLearnedSince[moveIndex] = movesLearnedSince[moveIndex] + 1
+			end
+		end
+	end
+
+	-- Determine which moves are the oldest, by ranking them against their levels learnt.
+	local moveAgeRank = { 1, 1, 1, 1 }
+	for moveIndex, move in pairs(pokemon.moves) do
+		for moveIndexCompare, moveCompare in pairs(pokemon.moves) do
+			if moveIndex ~= moveIndexCompare then
+				if move.level > moveCompare.level then
+					moveAgeRank[moveIndex] = moveAgeRank[moveIndex] + 1
+				end
+			end
+		end
+	end
+
+	-- A move is only star'd if it was possible it has been forgotten
+	for moveIndex, move in pairs(pokemon.moves) do
+		if move.level ~= 1 and movesLearnedSince[moveIndex] >= moveAgeRank[moveIndex] then
+			stars[moveIndex] = "*"
+		end
+	end
+
+	return stars
+end
+
+-- Move Header format: C/T (N), where C is moves learned so far, T is total number available to learn, and N is the next level the Pokemon learns a move
+-- Example: 4/12 (25)
+function Utils.getMovesLearnedHeader(pokemonID, level)
+	if pokemonID == nil or pokemonID == 0 or level == nil then
+		return "0/0 (0)"
+	end
+
+	local movesLearned = 0
+	local nextMoveLevel = 0
+	local foundNextMove = false
+
+	local allMoveLevels = PokemonData[pokemonID + 1].movelvls[GameSettings.versiongroup]
+	for _, lv in pairs(allMoveLevels) do
+		if lv <= level then
+			movesLearned = movesLearned + 1
+		elseif not foundNextMove then
+			nextMoveLevel = lv
+			foundNextMove = true
+		end
+	end
+
+	local header = movesLearned .. "/" .. table.getn(allMoveLevels)
+	if foundNextMove then
+		header = header .. " (" .. nextMoveLevel .. ")"
+	end
+
+	return header
+end
+
 function Utils.netEffectiveness(move, pkmnData)
 	local effectiveness = 1.0
 
@@ -44,7 +120,7 @@ function Utils.netEffectiveness(move, pkmnData)
 
 	for _, type in ipairs(pkmnData["type"]) do
 		local moveType = move["type"]
-		if move["name"] == "Hidden Power" and Tracker.Data.selectedPlayer == 1 then
+		if move["name"] == "Hidden Power" and Tracker.Data.isViewingOwn then
 			moveType = Tracker.Data.currentHiddenPowerType
 		end
 		if moveType ~= "---" then
@@ -59,7 +135,7 @@ end
 function Utils.isSTAB(move, pkmnData)
 	for _, type in ipairs(pkmnData["type"]) do
 		local moveType = move.type
-		if move.name == "Hidden Power" and Tracker.Data.selectedPlayer == 1 then
+		if move.name == "Hidden Power" and Tracker.Data.isViewingOwn then
 			moveType = Tracker.Data.currentHiddenPowerType
 		end
 		if moveType == type then
@@ -114,13 +190,49 @@ function Utils.calculateHighHPBasedDamage(currentHP, maxHP)
 	return tostring(roundedPower)
 end
 
-function Utils.playerHasMove(moveName)
-	local pokemon = Tracker.Data.selectedPokemon 
-	local currentMoves = {pokemon["move1"],pokemon["move2"],pokemon["move3"],pokemon["move4"]}
-	for index, move in pairs(currentMoves) do
-		if MoveData[move+1].name == moveName then
+function Utils.pokemonHasMove(pokemon, moveName)
+	if pokemon == nil or moveName == nil then return false end
+
+	for _, move in pairs(pokemon.moves) do
+		if moveName == MoveData[move.id + 1].name then
 			return true
 		end
 	end
 	return false
+end
+
+-- Returns the text color for PC heal tracking
+function Utils.getCenterHealColor()
+	local currentCount = Tracker.Data.centerHeals
+	if Options["PC heals count downward"] then
+		-- Counting downwards
+		if currentCount < 1 then
+			return GraphicConstants.THEMECOLORS["Negative text"]
+		elseif currentCount < 6 then
+			return GraphicConstants.THEMECOLORS["Intermediate text"]
+		else
+			return GraphicConstants.THEMECOLORS["Default text"]
+		end
+	else
+		-- Counting upwards
+		if currentCount < 5 then
+			return GraphicConstants.THEMECOLORS["Default text"]
+		elseif currentCount < 10 then
+			return GraphicConstants.THEMECOLORS["Intermediate text"]
+		else
+			return GraphicConstants.THEMECOLORS["Negative text"]
+		end
+	end
+end
+
+function Utils.truncateRomsFolder(folder)
+	if folder then
+		if string.len(folder) > 10 then
+			return "..." .. string.sub(folder, string.len(folder) - 10)
+		else
+			return folder
+		end
+	else
+		return ""
+	end
 end
